@@ -25,12 +25,12 @@ RUN curl -L https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-gene
     -o /opt/qemu/debian.img
 
 # Write meta-data
-RUN echo "instance-id: debian-vm\nlocal-hostname: debian-vm" > /cloud-init/meta-data
+RUN echo "instance-id: para-vm\nlocal-hostname: para-vm" > /cloud-init/meta-data
 
-# Write user-data with working root login and password 'root'
+# Write user-data with auto root login
 RUN printf "#cloud-config\n\
 preserve_hostname: false\n\
-hostname: debian-vm\n\
+hostname: para-vm\n\
 users:\n\
   - name: root\n\
     gecos: root\n\
@@ -45,6 +45,12 @@ chpasswd:\n\
     root:root\n\
   expire: false\n\
 runcmd:\n\
+  - mkdir -p /etc/systemd/system/getty@tty1.service.d\n\
+  - bash -c 'echo \"[Service]\" > /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
+  - bash -c 'echo \"ExecStart=\" >> /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
+  - bash -c 'echo \"ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM\" >> /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
+  - systemctl daemon-reload\n\
+  - systemctl restart getty@tty1\n\
   - systemctl enable ssh\n\
   - systemctl restart ssh\n" > /cloud-init/user-data
 
@@ -79,10 +85,10 @@ qemu-system-x86_64 \
     -enable-kvm \
     -cpu host \
     -smp 2 \
-    -m 6144 \
+    -m 8192 \
     -drive file="$DISK",format=raw,if=virtio \
     -drive file="$SEED",format=raw,if=virtio \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -netdev user,id=net0,hostfwd=tcp::2221-:22 \
     -device virtio-net,netdev=net0 \
     -vga virtio \
     -display vnc=:0 \
@@ -93,14 +99,14 @@ websockify --web=/novnc 6080 localhost:5900 &
 
 echo "================================================"
 echo " 🖥️  VNC: http://localhost:6080/vnc.html"
-echo " 🔐 SSH: ssh root@localhost -p 2222"
-echo " 🧾 Login: root / root"
-echo "Fully Made By Para"
+echo " 🔐 SSH: ssh root@localhost -p 2221"
+echo " 🧾 Login: root / root (SSH only)"
+echo " 🔓 Auto-login as root on VNC console"
 echo "================================================"
 
 # Wait for SSH port to be ready
 for i in {1..30}; do
-  nc -z localhost 2222 && echo "✅ VM is ready!" && break
+  nc -z localhost 2221 && echo "✅ VM is ready!" && break
   echo "⏳ Waiting for SSH..."
   sleep 2
 done
@@ -112,4 +118,7 @@ RUN chmod +x /start.sh
 
 VOLUME /data
 
-EXPOSE 6080 2222
+EXPOSE 6080 2221
+
+# Auto start VM when container runs
+CMD ["/start.sh"]
