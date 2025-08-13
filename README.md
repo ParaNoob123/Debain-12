@@ -1,5 +1,6 @@
 # Clone the Debian 12 repository
 git clone https://github.com/ParaNoob123/Debain-12
+# Go's To Debain-12 Repo
 cd Debain-12
 
 # Build the Docker image
