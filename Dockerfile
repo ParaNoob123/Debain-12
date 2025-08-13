@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install necessary packages
+# Install QEMU, noVNC, and tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     qemu-utils \
@@ -11,27 +11,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     novnc \
     websockify \
     curl \
-    neofetch \
     unzip \
     openssh-client \
     net-tools \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Create required directories
+# Create directories
 RUN mkdir -p /data /novnc /opt/qemu /cloud-init
 
-# Download Debian 12 (Bookworm) cloud image
+# Download Debian 12 cloud image
 RUN curl -L https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2 \
     -o /opt/qemu/debian.img
 
-# Write meta-data
-RUN echo "instance-id: debian-vm\nlocal-hostname: debian-vm" > /cloud-init/meta-data
+# Cloud-init meta-data
+RUN echo "instance-id: para-vm\nlocal-hostname: para-vm" > /cloud-init/meta-data
 
-# Write user-data with working root login and password 'root'
+# Cloud-init user-data (root login: root/root)
 RUN printf "#cloud-config\n\
 preserve_hostname: false\n\
-hostname: debian-vm\n\
+hostname: para-vm\n\
 users:\n\
   - name: root\n\
     gecos: root\n\
@@ -68,7 +67,7 @@ DISK="/data/vm.raw"
 IMG="/opt/qemu/debian.img"
 SEED="/opt/qemu/seed.iso"
 
-# Create disk if it doesn't exist
+# Create VM disk if it doesn't exist
 if [ ! -f "$DISK" ]; then
     echo "Creating VM disk..."
     qemu-img convert -f qcow2 -O raw "$IMG" "$DISK"
@@ -98,7 +97,7 @@ echo " 🔐 SSH: ssh root@localhost -p 2221"
 echo " 🧾 Login: root / root"
 echo "================================================"
 
-# Wait for SSH port to be ready
+# Wait for SSH to be ready
 for i in {1..30}; do
   nc -z localhost 2221 && echo "✅ VM is ready!" && break
   echo "⏳ Waiting for SSH..."
@@ -114,5 +113,4 @@ VOLUME /data
 
 EXPOSE 6080 2221
 
-# Automatically start the VM when container runs
 CMD ["/start.sh"]
