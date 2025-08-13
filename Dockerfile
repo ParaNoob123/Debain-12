@@ -1,34 +1,28 @@
-FROM ubuntu:22.04
+FROM debian:12
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install necessary packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    qemu-system-x86 \
-    qemu-utils \
-    cloud-image-utils \
-    genisoimage \
-    novnc \
-    websockify \
-    curl \
-    unzip \
-    openssh-client \
-    net-tools \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    systemd systemd-sysv \
+    openssh-server sudo \
+    qemu-kvm cloud-init \
+    novnc websockify \
+    xfce4 xfce4-goodies \
+    xterm \
+    && apt-get clean
 
-# Create required directories
-RUN mkdir -p /data /novnc /opt/qemu /cloud-init
+# SSH root login setup
+RUN mkdir /var/run/sshd && \
+    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
 
-# Download Debian 12 (Bookworm) cloud image
-RUN curl -L https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2 \
-    -o /opt/qemu/debian.img
+# Root password = root
+RUN echo "root:root" | chpasswd
 
-# Write meta-data
-RUN echo "instance-id: para-vm\nlocal-hostname: para-vm" > /cloud-init/meta-data
-
-# Write user-data with auto root login
-RUN printf "#cloud-config\n\
+# Cloud-init autologin config for root in TTY
+RUN mkdir -p /cloud-init && \
+    printf "#cloud-config\n\
 preserve_hostname: false\n\
 hostname: para-vm\n\
 users:\n\
@@ -48,77 +42,18 @@ runcmd:\n\
   - mkdir -p /etc/systemd/system/getty@tty1.service.d\n\
   - bash -c 'echo \"[Service]\" > /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
   - bash -c 'echo \"ExecStart=\" >> /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
-  - bash -c 'echo \"ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM\" >> /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
+  - bash -c 'echo \"ExecStart=-/sbin/agetty --autologin root --noclear %%I \$TERM\" >> /etc/systemd/system/getty@tty1.service.d/override.conf'\n\
   - systemctl daemon-reload\n\
   - systemctl restart getty@tty1\n\
   - systemctl enable ssh\n\
   - systemctl restart ssh\n" > /cloud-init/user-data
 
-# Create cloud-init ISO
-RUN genisoimage -output /opt/qemu/seed.iso -volid cidata -joliet -rock \
-    /cloud-init/user-data /cloud-init/meta-data
-
-# Setup noVNC
-RUN curl -L https://github.com/novnc/noVNC/archive/refs/tags/v1.3.0.zip -o /tmp/novnc.zip && \
-    unzip /tmp/novnc.zip -d /tmp && \
-    mv /tmp/noVNC-1.3.0/* /novnc && \
-    rm -rf /tmp/novnc.zip /tmp/noVNC-1.3.0
-
-# Start script
-RUN cat <<'EOF' > /start.sh
-#!/bin/bash
-set -e
-
-DISK="/data/vm.raw"
-IMG="/opt/qemu/debian.img"
-SEED="/opt/qemu/seed.iso"
-
-# Create disk if it doesn't exist
-if [ ! -f "$DISK" ]; then
-    echo "Creating VM disk..."
-    qemu-img convert -f qcow2 -O raw "$IMG" "$DISK"
-    qemu-img resize "$DISK" 50G
-fi
-
-# Start VM
-qemu-system-x86_64 \
-    -enable-kvm \
-    -cpu host \
-    -smp 2 \
-    -m 8192 \
-    -drive file="$DISK",format=raw,if=virtio \
-    -drive file="$SEED",format=raw,if=virtio \
-    -netdev user,id=net0,hostfwd=tcp::2221-:22 \
-    -device virtio-net,netdev=net0 \
-    -vga virtio \
-    -display vnc=:0 \
-    -daemonize
-
-# Start noVNC
-websockify --web=/novnc 6080 localhost:5900 &
-
-echo "================================================"
-echo " 🖥️  VNC: http://localhost:6080/vnc.html"
-echo " 🔐 SSH: ssh root@localhost -p 2221"
-echo " 🧾 Login: root / root (SSH only)"
-echo " 🔓 Auto-login as root on VNC console"
-echo "================================================"
-
-# Wait for SSH port to be ready
-for i in {1..30}; do
-  nc -z localhost 2221 && echo "✅ VM is ready!" && break
-  echo "⏳ Waiting for SSH..."
-  sleep 2
-done
-
-wait
-EOF
-
+# Copy start script
+COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
-VOLUME /data
-
+# Expose VNC and SSH
 EXPOSE 6080 2221
 
-# Auto start VM when container runs
-CMD ["/start.sh"]
+# Boot with 6GB RAM and 2 vCPUs
+CMD ["bash", "-c", "qemu-system-x86_64 -m 6144 -smp 2 -enable-kvm -vnc :0 -device virtio-net,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2221-:22 & /start.sh"]
